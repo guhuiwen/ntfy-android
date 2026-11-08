@@ -18,7 +18,8 @@ class Colors {
         }
 
         fun notificationIcon(context: Context): Int {
-            return MaterialColors.getColor(context, R.attr.colorPrimary, Color.GREEN)
+            // 小狗之心：通知不染 ntfy 的绿色，和网页版小狗之心的通知一样不设颜色（0 = 系统默认）
+            return Color.TRANSPARENT
         }
 
         fun linkColor(context: Context): Int {

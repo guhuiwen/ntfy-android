@@ -5,6 +5,8 @@ import android.content.ActivityNotFoundException
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.media.AudioAttributes
 import android.media.AudioManager
 import android.media.RingtoneManager
@@ -88,7 +90,7 @@ class NotificationService(val context: Context) {
         val insistent = notification.priority == PRIORITY_MAX &&
                 (repository.getInsistentMaxPriorityEnabled() || subscription.insistent == Repository.INSISTENT_MAX_PRIORITY_ENABLED)
         val builder = NotificationCompat.Builder(context, channelId)
-            .setSmallIcon(R.drawable.ic_notification)
+            .setSmallIcon(R.drawable.xiaogou_small_icon) // 小狗之心：状态栏小图标和网页版小狗之心用同一张图
             .setColor(Colors.notificationIcon(context))
             .setContentTitle(title)
             .setWhen(notification.timestamp * 1000) // Set timestamp (convert seconds to millis)
@@ -138,7 +140,7 @@ class NotificationService(val context: Context) {
         val isSupportedImage = supportedImage(notification.attachment?.type)
         val subscriptionIcon = subscription.icon?.readBitmapFromUriOrNull(context)
         val notificationIcon = notification.icon?.contentUri?.readBitmapFromUriOrNull(context)
-        val largeIcon = notificationIcon ?: subscriptionIcon
+        val largeIcon = notificationIcon ?: subscriptionIcon ?: defaultLargeIcon()
         if (contentUri != null && isSupportedImage) {
             try {
                 val attachmentBitmap = contentUri.readBitmapFromUri(context)
@@ -160,6 +162,15 @@ class NotificationService(val context: Context) {
                 .setContentText(message)
                 .setStyle(NotificationCompat.BigTextStyle().bigText(message))
                 .setLargeIcon(largeIcon) // May be null
+        }
+    }
+
+    // 小狗之心：消息自己没带图标时，通知右边默认放小狗之心图标（网页版小狗之心的通知就是这样）
+    private fun defaultLargeIcon(): Bitmap? {
+        return try {
+            BitmapFactory.decodeResource(context.resources, R.drawable.xiaogou_large_icon)
+        } catch (_: Exception) {
+            null
         }
     }
 

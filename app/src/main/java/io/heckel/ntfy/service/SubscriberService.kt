@@ -402,7 +402,7 @@ class SubscriberService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
 
         val notification = NotificationCompat.Builder(this, NOTIFICATION_CONNECTION_ALERT_CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_notification)
+            .setSmallIcon(R.drawable.xiaogou_small_icon) // 小狗之心
             .setColor(Colors.notificationIcon(this))
             .setContentTitle(getString(R.string.connection_alert_title))
             .setContentText(text)
@@ -478,7 +478,7 @@ class SubscriberService : Service() {
             PendingIntent.getActivity(this, 0, notificationIntent, PendingIntent.FLAG_IMMUTABLE)
         }
         return NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_notification_instant)
+            .setSmallIcon(R.drawable.xiaogou_small_icon) // 小狗之心
             .setColor(Colors.notificationIcon(this))
             .setContentTitle(title)
             .setContentText(text)
