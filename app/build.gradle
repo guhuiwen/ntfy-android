@@ -22,6 +22,11 @@ android {
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
+        // 小狗之心：原生库只打 64 位 ARM 的（唤醒词引擎带着好几种架构，全打进去包会大很多）
+        ndk {
+            abiFilters 'arm64-v8a'
+        }
+
         /* Required for Room schema migrations */
         ksp {
             arg("room.schemaLocation", "$projectDir/schemas")
@@ -95,6 +100,9 @@ dependencies {
     implementation "androidx.fragment:fragment-ktx:1.8.9"
     implementation "androidx.work:work-runtime-ktx:2.11.2"
     implementation 'androidx.preference:preference-ktx:1.2.1'
+
+    // 小狗之心：唤醒词引擎（sherpa-onnx 的安卓包，经 jitpack；模型由 GitHub Actions 打包时下载，不进仓库）
+    implementation 'com.github.k2-fsa:sherpa-onnx:v2.0.1'
 
     // JSON serialization
     implementation 'com.google.code.gson:gson:2.13.2'

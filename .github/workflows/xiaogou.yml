@@ -28,6 +28,21 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
+      - name: 下载唤醒词模型（公开的中文小模型，不进仓库）
+        run: |
+          set -euo pipefail
+          mkdir -p app/src/main/assets/kws "$RUNNER_TEMP/kws"
+          curl -fL --retry 3 -o "$RUNNER_TEMP/kws.tar.bz2" \
+            https://github.com/k2-fsa/sherpa-onnx/releases/download/kws-models/sherpa-onnx-kws-zipformer-wenetspeech-3.3M-2024-01-01.tar.bz2
+          tar -xjf "$RUNNER_TEMP/kws.tar.bz2" -C "$RUNNER_TEMP/kws"
+          D="$RUNNER_TEMP/kws/sherpa-onnx-kws-zipformer-wenetspeech-3.3M-2024-01-01"
+          cp "$D/encoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx" app/src/main/assets/kws/encoder.onnx
+          cp "$D/decoder-epoch-12-avg-2-chunk-16-left-64.onnx" app/src/main/assets/kws/decoder.onnx
+          cp "$D/joiner-epoch-12-avg-2-chunk-16-left-64.int8.onnx" app/src/main/assets/kws/joiner.onnx
+          cp "$D/tokens.txt" app/src/main/assets/kws/tokens.txt
+          ls -la app/src/main/assets/kws
+          grep -cE "^(ā|a|zh|m|ū) " app/src/main/assets/kws/tokens.txt || true
+
       - name: 编译 F-Droid 版（不带谷歌组件）
         run: ./gradlew --no-daemon assembleFdroidRelease
 

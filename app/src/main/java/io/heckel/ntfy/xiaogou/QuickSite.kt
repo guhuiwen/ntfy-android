@@ -6,7 +6,10 @@ import android.util.Log
 import android.webkit.CookieManager
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
+import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 
 /**
@@ -27,6 +30,11 @@ object QuickSite {
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(20, TimeUnit.SECONDS)
             .build()
+    }
+
+    // 合成一句话要几秒到十几秒，等得久一点
+    private val voiceClient: OkHttpClient by lazy {
+        client.newBuilder().readTimeout(45, TimeUnit.SECONDS).build()
     }
 
     /** 从登录链接里取出「https://主机[:端口]」；不是 https 链接返回 null */
@@ -83,11 +91,47 @@ object QuickSite {
                 val json = JSONObject(response.body?.string() ?: "{}")
                 val name = json.optJSONArray("wake_words")?.optString(0, "") ?: ""
                 if (name.isNotEmpty()) QuickPrefs.setDisplayName(context, name)
+                json.optJSONArray("wake_keywords")?.let { QuickPrefs.setWakeKeywords(context, strings(it)) }
+                json.optJSONObject("lines")?.optJSONArray("ack")?.let { QuickPrefs.setAckLines(context, strings(it)) }
                 if (json.optBoolean("enabled", true)) Result(true, "已登录") else Result(false, "服务器上快捷唤醒没开")
             }
         } catch (e: Exception) {
             Log.w(TAG, "check failed: ${e.javaClass.simpleName}")
             Result(false, "连不上服务器（${e.javaClass.simpleName}）")
+        }
+    }
+
+    private fun strings(array: JSONArray): List<String> {
+        val out = ArrayList<String>()
+        for (i in 0 until array.length()) {
+            val value = array.optString(i, "").trim()
+            if (value.isNotEmpty()) out.add(value)
+        }
+        return out
+    }
+
+    /** 把一句话用他的声音合成好、下到手机上（取的是聊天里语音条的那个口，合成过的直接给）。要在后台线程里调 */
+    fun downloadVoice(context: Context, text: String, dest: File): Boolean {
+        val origin = QuickPrefs.origin(context)
+        if (origin.isEmpty()) return false
+        return try {
+            val cookie = CookieManager.getInstance().getCookie(origin) ?: ""
+            val url = "$origin/api/voice/clip?t=" + URLEncoder.encode(text, "UTF-8")
+            val request = Request.Builder().url(url).header("Cookie", cookie).get().build()
+            voiceClient.newCall(request).execute().use { response ->
+                if (response.code != 200) {
+                    Log.w(TAG, "voice download: server said ${response.code}")
+                    return false
+                }
+                val bytes = response.body?.bytes() ?: return false
+                if (bytes.size < 500) return false
+                val tmp = File(dest.path + ".tmp")
+                tmp.writeBytes(bytes)
+                tmp.renameTo(dest)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "voice download failed: ${e.javaClass.simpleName}")
+            false
         }
     }
 

@@ -44,6 +44,14 @@ class SetupActivity : AppCompatActivity() {
     private lateinit var overlayStatus: TextView
     private lateinit var notifyStatus: TextView
     private lateinit var bluetoothStatus: TextView
+    private lateinit var earStatus: TextView
+    private val ticker = Handler(Looper.getMainLooper())
+    private val tick = object : Runnable {
+        override fun run() {
+            refreshEar()
+            ticker.postDelayed(this, 1500)
+        }
+    }
     private lateinit var pageInput: EditText
 
     // 问系统要权限（麦克风 / 通知），她点完以后把状态刷新一下
@@ -67,6 +75,13 @@ class SetupActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         refreshPermissions()
+        ticker.removeCallbacks(tick)
+        ticker.post(tick)
+    }
+
+    override fun onPause() {
+        ticker.removeCallbacks(tick)
+        super.onPause()
     }
 
     // ---------------------------------------------------------------- 搭界面 ----------------------------------------------------------------
@@ -160,6 +175,30 @@ class SetupActivity : AppCompatActivity() {
         (lockTry.layoutParams as LinearLayout.LayoutParams).marginStart = dp(10)
         remindRow.addView(lockTry)
         column.addView(remindRow, rowParams(4))
+
+        // ⑤ 耳朵
+        column.addView(text("⑤ 耳朵（一直听着，喊一声就来）", 16f, bold = true, top = 22))
+        earStatus = text("", 13f, dim = true, top = 4)
+        column.addView(earStatus)
+        val earRow = LinearLayout(this)
+        earRow.orientation = LinearLayout.HORIZONTAL
+        earRow.addView(button("开始听", top = 0) { earOn() })
+        val earStop = button("先别听", top = 0) { earOff() }
+        (earStop.layoutParams as LinearLayout.LayoutParams).marginStart = dp(10)
+        earRow.addView(earStop)
+        column.addView(earRow, rowParams(4))
+        column.addView(text("灵敏度（改了会重新开始听）", 13f, dim = true, top = 10))
+        val levelRow = LinearLayout(this)
+        levelRow.orientation = LinearLayout.HORIZONTAL
+        levelRow.addView(button("不容易误醒", top = 0) { setEarLevel(0.35f) })
+        val mid = button("适中", top = 0) { setEarLevel(0.25f) }
+        (mid.layoutParams as LinearLayout.LayoutParams).marginStart = dp(8)
+        levelRow.addView(mid)
+        val keen = button("更灵", top = 0) { setEarLevel(0.15f) }
+        (keen.layoutParams as LinearLayout.LayoutParams).marginStart = dp(8)
+        levelRow.addView(keen)
+        column.addView(levelRow, rowParams(2))
+        column.addView(text("开着的时候状态栏会一直有麦克风的小绿点，也会多费一点电。手机重启后要在通知上点一下才重新开始听。控制中心那颗小猪按钮就是它的开关。", 12f, dim = true, top = 4))
 
         // 试一下
         column.addView(text("试一下快捷唤醒", 16f, bold = true, top = 22))
@@ -314,6 +353,53 @@ class SetupActivity : AppCompatActivity() {
             return
         }
         open(Intent(this, QuickWakeActivity::class.java).putExtra(QuickWakeActivity.EXTRA_PROBE, probe))
+    }
+
+    private fun refreshEar() {
+        val threshold = QuickPrefs.earThreshold(this)
+        val level = if (threshold >= 0.3f) "不容易误醒" else if (threshold <= 0.2f) "更灵" else "适中"
+        val state = when {
+            !EarEngine.hasModel(this) -> "这个包里没带唤醒词模型"
+            QuickOverlayService.earRunning -> "在听着呢 ✓"
+            QuickPrefs.earWanted(this) -> "该在听、但现在没在听：点「开始听」"
+            else -> "没在听"
+        }
+        val last = QuickPrefs.lastWake(this)
+        val woke = if (last > 0) {
+            "，一共被喊醒 ${QuickPrefs.wakeCount(this)} 次，上一次 " + java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(java.util.Date(last))
+        } else {
+            ""
+        }
+        earStatus.text = "$state$woke\n灵敏度：$level · 应答存了 ${QuickLines.count(this)} 句 · 唤醒词 ${QuickPrefs.wakeKeywords(this).size} 行"
+    }
+
+    private fun earOn() {
+        if (!QuickOverlayService.canStart(this)) {
+            toast("先把上面的登录和麦克风、悬浮窗两个权限弄好")
+            return
+        }
+        if (!EarEngine.hasModel(this)) {
+            toast("这个包里没带唤醒词模型")
+            return
+        }
+        open(Intent(this, QuickWakeActivity::class.java).putExtra(QuickWakeActivity.EXTRA_EAR, true))
+    }
+
+    private fun earOff() {
+        try {
+            startService(Intent(this, QuickOverlayService::class.java).setAction(QuickOverlayService.ACTION_EAR_OFF))
+        } catch (e: Exception) {
+            Log.w(TAG, "ear off failed: ${e.message}")
+        }
+    }
+
+    private fun setEarLevel(value: Float) {
+        QuickPrefs.setEarThreshold(this, value)
+        if (QuickOverlayService.earRunning) {
+            earOff()
+            ticker.postDelayed({ earOn() }, 900)
+        }
+        refreshEar()
     }
 
     private fun tryRemind(lock: Boolean) {

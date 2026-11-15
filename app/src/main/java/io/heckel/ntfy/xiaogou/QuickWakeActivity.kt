@@ -9,9 +9,10 @@ import android.util.Log
 import androidx.core.content.ContextCompat
 
 /**
- * 透明的中转页：通知 / 控制中心按钮点下来先到这儿，再把悬浮窗服务拉起来，然后自己走掉。
+ * 透明的中转页：通知 / 控制中心按钮 / 设置页点下来先到这儿，再把悬浮窗服务拉起来，然后自己走掉。
  *
  * 一定要经过一个界面：安卓规定「带麦克风的前台服务」只能在 App 有界面看得见的时候启动。
+ * 带 EXTRA_EAR = 把耳朵开起来（之后服务一直在前台，喊一声就来，不用再点）；不带 = 这一次喊一声。
  */
 class QuickWakeActivity : Activity() {
     private val handler = Handler(Looper.getMainLooper())
@@ -38,11 +39,13 @@ class QuickWakeActivity : Activity() {
             leave()
             return
         }
-        val probe = intent?.getBooleanExtra(EXTRA_PROBE, false) == true
-        val service = Intent(this, QuickOverlayService::class.java)
-            .setAction(if (probe) QuickOverlayService.ACTION_PROBE else QuickOverlayService.ACTION_WAKE)
+        val action = when {
+            intent?.getBooleanExtra(EXTRA_EAR, false) == true -> QuickOverlayService.ACTION_EAR_ON
+            intent?.getBooleanExtra(EXTRA_PROBE, false) == true -> QuickOverlayService.ACTION_PROBE
+            else -> QuickOverlayService.ACTION_WAKE
+        }
         try {
-            ContextCompat.startForegroundService(this, service)
+            ContextCompat.startForegroundService(this, Intent(this, QuickOverlayService::class.java).setAction(action))
         } catch (e: Exception) {
             Log.w(TAG, "start overlay service failed: ${e.javaClass.simpleName} ${e.message}")
         }
@@ -65,5 +68,6 @@ class QuickWakeActivity : Activity() {
     companion object {
         private const val TAG = "XiaogouQuick"
         const val EXTRA_PROBE = "probe"
+        const val EXTRA_EAR = "ear"
     }
 }

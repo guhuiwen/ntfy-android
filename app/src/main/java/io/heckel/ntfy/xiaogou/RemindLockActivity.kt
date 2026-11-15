@@ -79,7 +79,10 @@ class RemindLockActivity : Activity(), RemindPage.Listener {
     override fun onPageReady() {
         pageReady = true
         val data = current
-        if (data != null) page?.show(data)
+        if (data != null) {
+            QuickOverlayService.earHoldUntil = System.currentTimeMillis() + 20_000L     // 他念提醒的这一阵，耳朵先别找唤醒词
+            page?.show(data)
+        }
     }
 
     override fun onPageResize(heightCss: Int) {

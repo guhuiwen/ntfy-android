@@ -3,8 +3,10 @@ package io.heckel.ntfy.xiaogou
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Notification
+import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -12,12 +14,17 @@ import android.content.pm.ServiceInfo
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.hardware.display.DisplayManager
+import android.media.AudioAttributes
+import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.PowerManager
 import android.provider.Settings
+import android.service.quicksettings.TileService
+import android.util.Base64
 import android.util.Log
 import android.view.Display
 import android.view.Gravity
@@ -43,15 +50,19 @@ import androidx.core.content.ContextCompat
 import io.heckel.ntfy.R
 
 /**
- * 快捷唤醒的悬浮窗（小狗之心）。
+ * 快捷唤醒的悬浮窗 + 耳朵（小狗之心）。
  *
  * 「网页画皮、原生骨头」：画面和这一次对话的逻辑（连服务器、麦克风、放声音、字幕）都在服务器上的一张网页里，
  * 这里只负责骨头——把那张网页放进一个背景透明的悬浮窗（卡片多高窗口就多高，别处的触摸照样落到下面的 App 上）、
  * 以「带麦克风的前台服务」的身份撑着它、把麦克风权限交给它、替它打开别的界面。改样子只要改网页，不用重装 App。
  *
+ * 耳朵（[EarListener]）也住在这个服务里：开着的时候服务一直在前台，听到唤醒词就把悬浮窗亮出来。
+ * 放在同一个服务里是因为安卓不许从后台再起一个带麦克风的前台服务——这个服务是她点了一下才起来的，之后就不用再点。
+ *
  * 网页 ↔ 这里（window.XiaogouHost）：
  *   网页 → 这里：ready() 页面好了 · resize(高度) · close(原因) 可以把窗口撤了 · openCall(地址) 切去打电话 · openUrl(地址)
- *   这里 → 网页：ddQuick.wake() 喊醒 · ddQuick.hide() 收起 · ddQuick.probe() 试小猪片子
+ *               · takePreroll() 取「喊醒之后她说的话」· ackDone() 应答放完了
+ *   这里 → 网页：ddQuick.wake({ear}) 喊醒 · ddQuick.ack(mp3) 放一句应答 · ddQuick.hide() 收起 · ddQuick.probe() 试小猪片子
  */
 class QuickOverlayService : Service() {
     private val main = Handler(Looper.getMainLooper())
@@ -63,10 +74,19 @@ class QuickOverlayService : Service() {
     private var attached = false            // 悬浮窗现在挂在屏幕上吗
     private var pageReady = false           // 网页说过「我好了」
     private var pageOrigin = ""
+    private var pageLoadedAt = 0L
     private var pending: String? = null     // 页面还没好时先记下要它做的事（wake / probe）
     private var foreground = false
     private var density = 1f
     private var shownAt = 0L
+
+    // 耳朵
+    @Volatile
+    private var listener: EarListener? = null
+    private var earStarting = false
+    private var earSession = false          // 这一次是耳朵喊醒的（要把她一口气说的话补上去）
+    private var ackPlayer: MediaPlayer? = null
+    private var wakeLock: PowerManager.WakeLock? = null
 
     private val idleRelease = Runnable {
         Log.d(TAG, "idle for a while, releasing the page")
@@ -74,6 +94,7 @@ class QuickOverlayService : Service() {
     }
     private val loadTimeout = Runnable { onPageFailed(-1, "timeout") }
     private val hideFallback = Runnable { if (attached) finishSession("hide_fallback") }
+    private val earResume = Runnable { listener?.resume() }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -85,16 +106,39 @@ class QuickOverlayService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val action = intent?.action
-        Log.d(TAG, "onStartCommand action=$action attached=$attached ready=$pageReady")
+        Log.d(TAG, "onStartCommand action=$action attached=$attached ready=$pageReady ear=$earRunning")
         when (action) {
             ACTION_WAKE, ACTION_PROBE -> {
+                if (!enterForeground()) {
+                    if (!earRunning) stopSelf()
+                    return START_NOT_STICKY
+                }
+                main.removeCallbacks(idleRelease)
+                main.removeCallbacks(hideFallback)
+                main.removeCallbacks(earResume)
+                earSession = false
+                listener?.close()            // 手点的喊醒：不用补录音，把麦克风让给网页
+                show(if (action == ACTION_PROBE) "probe" else "wake")
+            }
+            ACTION_EAR_ON -> {
                 if (!enterForeground()) {
                     stopSelf()
                     return START_NOT_STICKY
                 }
                 main.removeCallbacks(idleRelease)
-                main.removeCallbacks(hideFallback)
-                show(if (action == ACTION_PROBE) "probe" else "wake")
+                QuickPrefs.setEarWanted(this, true)
+                startEar()
+            }
+            ACTION_EAR_OFF -> {
+                QuickPrefs.setEarWanted(this, false)
+                stopEar()
+                if (attached) {
+                    updateNotification()
+                } else {
+                    leaveForeground()
+                    scheduleRelease()
+                }
+                QuickEntry.refresh(this)
             }
             ACTION_HIDE -> {
                 // 通知上的「收起」：先请网页自己收（它会把话停掉、把卡片滑下去），两秒没动静就直接撤
@@ -114,15 +158,17 @@ class QuickOverlayService : Service() {
     override fun onDestroy() {
         Log.d(TAG, "service destroyed")
         main.removeCallbacksAndMessages(null)
+        stopEar()
         destroyWebView()
         leaveForeground()
+        QuickEntry.refresh(this)
         super.onDestroy()
     }
 
     // ---------------------------------------------------------------- 前台服务 ----------------------------------------------------------------
 
     private fun enterForeground(): Boolean {
-        val notification = sessionNotification()
+        val notification = buildNotification()
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 startForeground(QuickEntry.NOTIFICATION_SESSION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
@@ -133,6 +179,10 @@ class QuickOverlayService : Service() {
             return true
         } catch (e: Exception) {
             Log.w(TAG, "startForeground(microphone) failed: ${e.javaClass.simpleName} ${e.message}")
+        }
+        if (foreground) {
+            // 本来就在前台（耳朵开着）：这次只是没能「再进一次」，不碍事
+            return true
         }
         // 带麦克风的那种没起成（权限没给 / 系统不让）：换一种把「我进前台了」这件事交代掉（不然系统会把 App 杀掉），再提示她
         try {
@@ -159,23 +209,259 @@ class QuickOverlayService : Service() {
         }
     }
 
-    private fun sessionNotification(): Notification {
-        val hide = PendingIntent.getService(
-            this, 3, Intent(this, QuickOverlayService::class.java).setAction(ACTION_HIDE),
+    /** 没有耳朵要撑着的时候：十分钟没人喊就把自己收掉 */
+    private fun scheduleRelease() {
+        main.removeCallbacks(idleRelease)
+        if (earRunning || earStarting) return
+        main.postDelayed(idleRelease, IDLE_RELEASE_MS)
+    }
+
+    private fun serviceIntent(action: String, requestCode: Int): PendingIntent {
+        return PendingIntent.getService(
+            this, requestCode, Intent(this, QuickOverlayService::class.java).setAction(action),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        return NotificationCompat.Builder(this, QuickEntry.CHANNEL_SESSION)
+    }
+
+    private fun buildNotification(): Notification {
+        val ear = earRunning || earStarting
+        val text = when {
+            attached -> getString(R.string.xiaogou_quick_session_text)
+            earStarting -> getString(R.string.xiaogou_quick_ear_starting)
+            earRunning -> getString(R.string.xiaogou_quick_ear_listening)
+            else -> getString(R.string.xiaogou_quick_session_text)
+        }
+        val builder = NotificationCompat.Builder(this, QuickEntry.CHANNEL_SESSION)
             .setSmallIcon(R.drawable.ic_xiaogou_quick)
             .setContentTitle(QuickPrefs.displayName(this))
-            .setContentText(getString(R.string.xiaogou_quick_session_text))
+            .setContentText(text)
             .setOngoing(true)
             .setShowWhen(false)
             .setSound(null)
             .setOnlyAlertOnce(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
-            .addAction(NotificationCompat.Action.Builder(0, getString(R.string.xiaogou_quick_session_hide), hide).build())
-            .build()
+        if (attached || !ear) {
+            builder.addAction(NotificationCompat.Action.Builder(0, getString(R.string.xiaogou_quick_session_hide), serviceIntent(ACTION_HIDE, 3)).build())
+        }
+        if (ear) {
+            builder.setContentIntent(QuickEntry.wakeIntent(this, 4, false))      // 点一下 = 不出声也能喊他
+            builder.addAction(NotificationCompat.Action.Builder(0, getString(R.string.xiaogou_quick_ear_pause), serviceIntent(ACTION_EAR_OFF, 5)).build())
+        }
+        return builder.build()
+    }
+
+    private fun updateNotification() {
+        if (!foreground) return
+        try {
+            (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
+                .notify(QuickEntry.NOTIFICATION_SESSION_ID, buildNotification())
+        } catch (e: Exception) {
+            Log.w(TAG, "updating notification failed: ${e.message}")
+        }
+    }
+
+    private fun refreshTile() {
+        try {
+            TileService.requestListeningState(this, ComponentName(this, QuickTileService::class.java))
+        } catch (_: Exception) {
+        }
+    }
+
+    // ---------------------------------------------------------------- 耳朵 ----------------------------------------------------------------
+
+    private val earCallback = object : EarListener.Callback {
+        override fun onEarReady(ok: Boolean) {
+            main.post { if (ok) onEarStarted() else onEarFailed() }
+        }
+
+        override fun onEarWake(keyword: String) {
+            main.post { onEarWake() }
+        }
+
+        override fun onEarWakeSpeech(continued: Boolean) {
+            main.post { onEarWakeSpeech(continued) }
+        }
+    }
+
+    @SuppressLint("WakelockTimeout")
+    private fun startEar() {
+        if (earStarting || listener?.isRunning == true) {
+            updateNotification()
+            return
+        }
+        earStarting = true
+        updateNotification()
+        try {
+            val lock = wakeLock ?: (getSystemService(Context.POWER_SERVICE) as PowerManager)
+                .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "XiaogouQuick:ear").also {
+                    it.setReferenceCounted(false)
+                    wakeLock = it
+                }
+            lock.acquire()      // 息屏以后也要接着听，所以一直拿着（关耳朵时放掉）
+        } catch (e: Exception) {
+            Log.w(TAG, "wake lock failed: ${e.message}")
+        }
+        val app = applicationContext
+        Thread {
+            // 取一次最新的配置（唤醒词的拼音、应答的台词）；连不上就用上次存下来的
+            QuickSite.check(app)
+            val lines = QuickPrefs.wakeKeywords(app)
+            val threshold = QuickPrefs.earThreshold(app)
+            main.post {
+                if (!earStarting) return@post                  // 准备的这会儿她又关掉了
+                if (lines.isEmpty() || !EarEngine.hasModel(app)) {
+                    Log.w(TAG, "ear: cannot start (keywords=${lines.size}, model=${EarEngine.hasModel(app)})")
+                    onEarFailed()
+                    return@post
+                }
+                val created = EarListener(app, earCallback)
+                listener = created
+                created.start(lines, threshold)
+            }
+            QuickLines.sync(app, QuickPrefs.ackLines(app))
+        }.start()
+    }
+
+    private fun onEarStarted() {
+        if (!earStarting) {
+            // 准备的这会儿她又关掉了
+            listener?.stop()
+            listener = null
+            return
+        }
+        earStarting = false
+        earRunning = true
+        Log.d(TAG, "ear: listening")
+        updateNotification()
+        QuickEntry.refresh(this)
+        refreshTile()
+        if (attached) {
+            listener?.close()       // 正好有一次对话在进行：等它完了再听
+        } else {
+            warmPage()              // 先把网页载好藏着，喊醒时卡片才能马上出来
+        }
+    }
+
+    private fun onEarFailed() {
+        earStarting = false
+        listener?.stop()
+        listener = null
+        earRunning = false
+        releaseWakeLock()
+        toast(R.string.xiaogou_quick_toast_ear_failed)
+        if (attached) {
+            updateNotification()
+        } else {
+            leaveForeground()
+            scheduleRelease()
+        }
+        QuickEntry.refresh(this)
+        refreshTile()
+    }
+
+    private fun stopEar() {
+        earStarting = false
+        main.removeCallbacks(earResume)
+        listener?.stop()
+        listener = null
+        val was = earRunning
+        earRunning = false
+        releaseWakeLock()
+        if (was) Log.d(TAG, "ear: off")
+        refreshTile()
+    }
+
+    private fun releaseWakeLock() {
+        try {
+            wakeLock?.let { if (it.isHeld) it.release() }
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun onEarWake() {
+        if (attached || !earRunning) {
+            // 已经有一次对话挂着了（不该发生：对话期间耳朵是闭着的）
+            if (attached) listener?.close()
+            return
+        }
+        QuickPrefs.noteWake(this)
+        earSession = true
+        main.removeCallbacks(idleRelease)
+        main.removeCallbacks(hideFallback)
+        main.removeCallbacks(earResume)
+        show("wake")        // 网页这就去连服务器；她接着说的话耳朵先录着，等网页的麦克风开了再整段补上去
+    }
+
+    private fun onEarWakeSpeech(continued: Boolean) {
+        if (!earSession || !attached) return
+        if (continued) {
+            Log.d(TAG, "ear: she kept talking, no ack")
+            return
+        }
+        val file = QuickLines.pick(this)
+        if (file == null) {
+            Log.d(TAG, "ear: no ack line stored yet")
+            return
+        }
+        if (pageReady) {
+            // 交给网页放：它自己放的声音，它的回声消除认得，不会被当成她说的话
+            try {
+                val data = Base64.encodeToString(file.readBytes(), Base64.NO_WRAP)
+                callPage("window.ddQuick && ddQuick.ack && ddQuick.ack('$data')")
+                return
+            } catch (e: Exception) {
+                Log.w(TAG, "ear: handing the ack to the page failed: ${e.message}")
+            }
+        }
+        playAckHere(file)
+    }
+
+    /** 网页还没载好的时候，应答由这里直接放（放完才开始算她说的话） */
+    private fun playAckHere(file: java.io.File) {
+        stopAck()
+        try {
+            val player = MediaPlayer()
+            player.setAudioAttributes(
+                AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ASSISTANT).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build()
+            )
+            player.setDataSource(file.absolutePath)
+            player.setOnCompletionListener {
+                stopAck()
+                listener?.markPrerollFromNow()
+            }
+            player.setOnErrorListener { _, _, _ ->
+                stopAck()
+                listener?.markPrerollFromNow()
+                true
+            }
+            player.prepare()
+            player.setVolume(0.9f, 0.9f)
+            player.start()
+            ackPlayer = player
+        } catch (e: Exception) {
+            Log.w(TAG, "ear: playing the ack failed: ${e.message}")
+            stopAck()
+        }
+    }
+
+    private fun stopAck() {
+        val player = ackPlayer ?: return
+        ackPlayer = null
+        try {
+            player.release()
+        } catch (_: Exception) {
+        }
+    }
+
+    /** 耳朵开着时：先把网页载好藏着（不挂到屏幕上） */
+    private fun warmPage() {
+        val origin = QuickPrefs.origin(this)
+        if (origin.isEmpty() || attached) return
+        if (webView != null && System.currentTimeMillis() - pageLoadedAt > PAGE_REFRESH_MS) {
+            destroyWebView()        // 载了很久了：重新载一遍，她传上去的新网页才用得上
+        }
+        ensureWebView(origin, quiet = true)
     }
 
     // ---------------------------------------------------------------- 悬浮窗 ----------------------------------------------------------------
@@ -188,9 +474,10 @@ class QuickOverlayService : Service() {
             return
         }
         shownAt = System.currentTimeMillis()
-        if (!ensureWebView(origin) || !attach()) {
+        if (!ensureWebView(origin, quiet = false) || !attach()) {
             return
         }
+        updateNotification()
         if (pageReady) {
             runPage(what)
         } else {
@@ -218,7 +505,7 @@ class QuickOverlayService : Service() {
     }
 
     @SuppressLint("SetJavaScriptEnabled")
-    private fun ensureWebView(origin: String): Boolean {
+    private fun ensureWebView(origin: String, quiet: Boolean): Boolean {
         if (webView != null && pageOrigin == origin) return true
         destroyWebView()
         pageOrigin = origin
@@ -248,6 +535,7 @@ class QuickOverlayService : Service() {
             box.addView(web, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
             container = box
             webView = web
+            pageLoadedAt = System.currentTimeMillis()
             val path = QuickPrefs.pagePath(this)
             Log.d(TAG, "loading page $path")
             // max-age=0：每次都问服务器一声「这页改过没有」（没改只回一个很小的 304），改了网页不用等缓存过期
@@ -255,9 +543,11 @@ class QuickOverlayService : Service() {
             return true
         } catch (e: Exception) {
             Log.w(TAG, "creating web view failed: ${e.javaClass.simpleName} ${e.message}")
-            toast(R.string.xiaogou_quick_toast_load_failed)
             destroyWebView()
-            finishSession("webview_failed")
+            if (!quiet) {
+                toast(R.string.xiaogou_quick_toast_load_failed)
+                finishSession("webview_failed")
+            }
             return false
         }
     }
@@ -333,21 +623,35 @@ class QuickOverlayService : Service() {
         }
     }
 
-    /** 这一次用完了：撤掉悬浮窗、退出前台；网页先留着（十分钟内再喊能马上出来），之后自己放掉 */
+    /** 这一次用完了：撤掉悬浮窗。耳朵开着就留在前台、回去接着听；没开就退出前台，网页留十分钟再放掉 */
     private fun finishSession(reason: String) {
         Log.d(TAG, "session finished: $reason")
         pending = null
+        earSession = false
         main.removeCallbacks(loadTimeout)
         main.removeCallbacks(hideFallback)
+        stopAck()
         detach()
-        leaveForeground()
-        main.removeCallbacks(idleRelease)
-        main.postDelayed(idleRelease, IDLE_RELEASE_MS)
+        if (earRunning || earStarting) {
+            main.removeCallbacks(earResume)
+            main.postDelayed(earResume, EAR_RESUME_MS)      // 等他最后那句话的余音过去再听
+            updateNotification()
+            warmPage()
+        } else {
+            leaveForeground()
+            scheduleRelease()
+        }
     }
 
     private fun runPage(what: String) {
-        Log.d(TAG, "page $what (${System.currentTimeMillis() - shownAt} ms after tap)")
-        callPage(if (what == "probe") "window.ddQuick && ddQuick.probe()" else "window.ddQuick && ddQuick.wake()")
+        Log.d(TAG, "page $what (${System.currentTimeMillis() - shownAt} ms after wake, ear=$earSession)")
+        callPage(
+            when {
+                what == "probe" -> "window.ddQuick && ddQuick.probe()"
+                earSession -> "window.ddQuick && ddQuick.wake({ear: true})"
+                else -> "window.ddQuick && ddQuick.wake({})"
+            }
+        )
     }
 
     private fun callPage(script: String) {
@@ -361,7 +665,7 @@ class QuickOverlayService : Service() {
     // ---------------------------------------------------------------- 网页那头来的事 ----------------------------------------------------------------
 
     private fun onPageReady() {
-        Log.d(TAG, "page ready (${System.currentTimeMillis() - shownAt} ms)")
+        Log.d(TAG, "page ready (${System.currentTimeMillis() - pageLoadedAt} ms after load)")
         pageReady = true
         main.removeCallbacks(loadTimeout)
         val what = pending
@@ -386,9 +690,12 @@ class QuickOverlayService : Service() {
 
     private fun onPageFailed(code: Int, what: String) {
         Log.w(TAG, "page failed: $what code=$code")
-        toast(if (code == 404) R.string.xiaogou_quick_toast_login else R.string.xiaogou_quick_toast_load_failed)
+        val wasShowing = attached
         destroyWebView()        // 下次再喊重新载一遍
-        finishSession("page_failed")
+        if (wasShowing || pending != null) {
+            toast(if (code == 404) R.string.xiaogou_quick_toast_login else R.string.xiaogou_quick_toast_load_failed)
+            finishSession("page_failed")
+        }
     }
 
     /** 打开自家网站上的一个地址：手机上装了网页版（WebAPK）就交给它，没有就交给浏览器 */
@@ -482,6 +789,26 @@ class QuickOverlayService : Service() {
         fun openUrl(url: String?) {
             main.post { openExternal(url ?: "") }
         }
+
+        /** 网页的麦克风开了：把耳朵从喊醒起录下的那一段交给它（base64 的 16kHz 16 位单声道），耳朵随即放掉麦克风 */
+        @JavascriptInterface
+        fun takePreroll(): String {
+            val ear = listener ?: return ""
+            return try {
+                val bytes = ear.takePreroll()
+                Log.d(TAG, "ear: handed ${bytes.size / 32} ms of her speech to the page")
+                if (bytes.isEmpty()) "" else Base64.encodeToString(bytes, Base64.NO_WRAP)
+            } catch (e: Exception) {
+                Log.w(TAG, "ear: preroll failed: ${e.message}")
+                ""
+            }
+        }
+
+        /** 网页把应答放完了：从现在起录到的才算她说的话 */
+        @JavascriptInterface
+        fun ackDone() {
+            listener?.markPrerollFromNow()
+        }
     }
 
     private inner class PageClient : WebViewClient() {
@@ -552,13 +879,26 @@ class QuickOverlayService : Service() {
         const val ACTION_WAKE = "io.heckel.ntfy.xiaogou.WAKE"
         const val ACTION_PROBE = "io.heckel.ntfy.xiaogou.PROBE"
         const val ACTION_HIDE = "io.heckel.ntfy.xiaogou.HIDE"
+        const val ACTION_EAR_ON = "io.heckel.ntfy.xiaogou.EAR_ON"
+        const val ACTION_EAR_OFF = "io.heckel.ntfy.xiaogou.EAR_OFF"
 
         /** 浮层现在挂在屏幕上吗（提醒卡片看它：他正在说话就先等等） */
         @Volatile
         var showing = false
+
+        /** 耳朵现在在听吗（入口通知、控制中心按钮、设置页看它） */
+        @Volatile
+        var earRunning = false
+
+        /** 这个时刻之前耳朵先别找唤醒词（我们自己在念提醒的时候设：他的声音里也会有那个名字） */
+        @Volatile
+        var earHoldUntil = 0L
+
         private const val DEFAULT_HEIGHT_DP = 300
         private const val LOAD_TIMEOUT_MS = 20_000L
         private const val IDLE_RELEASE_MS = 10 * 60 * 1000L
+        private const val PAGE_REFRESH_MS = 30 * 60 * 1000L
+        private const val EAR_RESUME_MS = 700L
 
         /** 登录过、麦克风和悬浮窗权限都给了，才能喊 */
         fun canStart(context: Context): Boolean {

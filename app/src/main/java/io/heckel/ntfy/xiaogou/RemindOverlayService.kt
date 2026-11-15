@@ -84,6 +84,7 @@ class RemindOverlayService : Service(), RemindPage.Listener {
         }
         val data = current
         if (pageReady && data != null) {
+            QuickOverlayService.earHoldUntil = System.currentTimeMillis() + EAR_HOLD_MS
             page?.show(data)
         } else {
             main.removeCallbacks(loadTimeout)
@@ -195,7 +196,10 @@ class RemindOverlayService : Service(), RemindPage.Listener {
         pageReady = true
         main.removeCallbacks(loadTimeout)
         val data = current
-        if (data != null && attached) page?.show(data)
+        if (data != null && attached) {
+            QuickOverlayService.earHoldUntil = System.currentTimeMillis() + EAR_HOLD_MS
+            page?.show(data)
+        }
     }
 
     override fun onPageResize(heightCss: Int) {
@@ -236,6 +240,7 @@ class RemindOverlayService : Service(), RemindPage.Listener {
         private const val LOAD_TIMEOUT_MS = 15_000L
         private const val RELEASE_MS = 2 * 60 * 1000L
         private const val RETRY_MS = 3000L
+        private const val EAR_HOLD_MS = 20_000L      // 他念提醒的这一阵，耳朵先别找唤醒词
         private const val MAX_WAIT_MS = 5 * 60 * 1000L
     }
 }

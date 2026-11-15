@@ -11,7 +11,7 @@ import io.heckel.ntfy.R
  * 这个仓库是公开的，代码里不写任何地址、钥匙和唤醒词。
  */
 object QuickPrefs {
-    const val BUILD = "qw-2"
+    const val BUILD = "qw-3"
     const val DEFAULT_PAGE = "/quick/overlay.html"
 
     private const val FILE = "xiaogou_quick"
@@ -21,6 +21,12 @@ object QuickPrefs {
     private const val KEY_ENTRY = "entry_notification"
     private const val KEY_DEBUG = "web_debug"
     private const val KEY_REMIND = "remind_card"
+    private const val KEY_EAR = "ear_wanted"
+    private const val KEY_EAR_THRESHOLD = "ear_threshold"
+    private const val KEY_KEYWORDS = "wake_keywords"
+    private const val KEY_ACK = "ack_lines"
+    private const val KEY_LAST_WAKE = "last_wake"
+    private const val KEY_WAKE_COUNT = "wake_count"
 
     private fun sp(context: Context): SharedPreferences =
         context.applicationContext.getSharedPreferences(FILE, Context.MODE_PRIVATE)
@@ -71,6 +77,48 @@ object QuickPrefs {
     fun setRemindCard(context: Context, enabled: Boolean) {
         sp(context).edit().putBoolean(KEY_REMIND, enabled).apply()
     }
+
+    /** 耳朵该不该开着（她开过、没关）。真在不在听看 QuickOverlayService.earRunning */
+    fun earWanted(context: Context): Boolean = sp(context).getBoolean(KEY_EAR, false)
+
+    fun setEarWanted(context: Context, wanted: Boolean) {
+        sp(context).edit().putBoolean(KEY_EAR, wanted).apply()
+    }
+
+    /** 唤醒词的门槛：越小越灵、也越容易误唤醒 */
+    fun earThreshold(context: Context): Float = sp(context).getFloat(KEY_EAR_THRESHOLD, 0.25f)
+
+    fun setEarThreshold(context: Context, value: Float) {
+        sp(context).edit().putFloat(KEY_EAR_THRESHOLD, value).apply()
+    }
+
+    private fun lines(context: Context, key: String): List<String> {
+        val raw = sp(context).getString(key, "") ?: ""
+        return raw.split("\n").map { it.trim() }.filter { it.isNotEmpty() }
+    }
+
+    /** 服务器给的唤醒词（拼音写法，一行一个）和应答台词：存一份，连不上服务器时也能把耳朵开起来 */
+    fun wakeKeywords(context: Context): List<String> = lines(context, KEY_KEYWORDS)
+
+    fun setWakeKeywords(context: Context, value: List<String>) {
+        sp(context).edit().putString(KEY_KEYWORDS, value.joinToString("\n")).apply()
+    }
+
+    fun ackLines(context: Context): List<String> = lines(context, KEY_ACK)
+
+    fun setAckLines(context: Context, value: List<String>) {
+        sp(context).edit().putString(KEY_ACK, value.joinToString("\n")).apply()
+    }
+
+    /** 记一笔「刚被喊醒了」（设置页上显示，方便看灵不灵） */
+    fun noteWake(context: Context) {
+        val prefs = sp(context)
+        prefs.edit().putLong(KEY_LAST_WAKE, System.currentTimeMillis()).putInt(KEY_WAKE_COUNT, prefs.getInt(KEY_WAKE_COUNT, 0) + 1).apply()
+    }
+
+    fun lastWake(context: Context): Long = sp(context).getLong(KEY_LAST_WAKE, 0L)
+
+    fun wakeCount(context: Context): Int = sp(context).getInt(KEY_WAKE_COUNT, 0)
 
     fun clearLogin(context: Context) {
         sp(context).edit().remove(KEY_ORIGIN).remove(KEY_NAME).apply()

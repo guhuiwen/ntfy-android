@@ -13,4 +13,9 @@
     <string name="xiaogou_quick_toast_login" translatable="false">登录失效了：到「快捷唤醒」设置里重新登录</string>
     <string name="xiaogou_quick_toast_load_failed" translatable="false">连不上服务器，等一下再试</string>
     <string name="xiaogou_quick_toast_open_failed" translatable="false">打不开那个页面</string>
+    <string name="xiaogou_quick_ear_starting" translatable="false">耳朵正在准备……</string>
+    <string name="xiaogou_quick_ear_listening" translatable="false">在听着呢，喊一声就来</string>
+    <string name="xiaogou_quick_ear_pause" translatable="false">先别听</string>
+    <string name="xiaogou_quick_entry_ear_text" translatable="false">点一下，重新开始听</string>
+    <string name="xiaogou_quick_toast_ear_failed" translatable="false">耳朵没开起来：到「快捷唤醒」设置里看看</string>
 </resources>
