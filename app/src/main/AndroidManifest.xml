@@ -19,6 +19,7 @@
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE"/>
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT"/> <!-- 可选：戴蓝牙耳机时让声音走耳机 -->
 
     <!-- UnifiedPush "raise to foreground" requirement, see https://unifiedpush.org/developers/spec/android/#service-to-raise-to-the-foreground -->
     <queries>
@@ -30,6 +31,10 @@
             <action android:name="android.intent.action.VIEW" />
             <category android:name="android.intent.category.BROWSABLE" />
             <data android:scheme="https" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
         </intent>
     </queries>
 
@@ -215,6 +220,21 @@
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Voice assistant card: while the small floating card is on screen, the service keeps the microphone session with the user's own server alive." />
+        </service>
+        <activity
+                android:name=".xiaogou.RemindLockActivity"
+                android:theme="@android:style/Theme.DeviceDefault.Light.NoActionBar"
+                android:showWhenLocked="true"
+                android:turnScreenOn="true"
+                android:excludeFromRecents="true"
+                android:launchMode="singleInstance"
+                android:taskAffinity="io.heckel.ntfy.xiaogou.remind"
+                android:configChanges="orientation|screenSize|keyboardHidden"
+                android:exported="false">
+        </activity>
+        <service
+                android:name=".xiaogou.RemindOverlayService"
+                android:exported="false">
         </service>
         <service
                 android:name=".xiaogou.QuickTileService"

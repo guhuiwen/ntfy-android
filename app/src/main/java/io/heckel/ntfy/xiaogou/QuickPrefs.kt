@@ -11,7 +11,7 @@ import io.heckel.ntfy.R
  * 这个仓库是公开的，代码里不写任何地址、钥匙和唤醒词。
  */
 object QuickPrefs {
-    const val BUILD = "qw-1"
+    const val BUILD = "qw-2"
     const val DEFAULT_PAGE = "/quick/overlay.html"
 
     private const val FILE = "xiaogou_quick"
@@ -20,6 +20,7 @@ object QuickPrefs {
     private const val KEY_PAGE = "page_path"
     private const val KEY_ENTRY = "entry_notification"
     private const val KEY_DEBUG = "web_debug"
+    private const val KEY_REMIND = "remind_card"
 
     private fun sp(context: Context): SharedPreferences =
         context.applicationContext.getSharedPreferences(FILE, Context.MODE_PRIVATE)
@@ -62,6 +63,13 @@ object QuickPrefs {
 
     fun setWebDebug(context: Context, enabled: Boolean) {
         sp(context).edit().putBoolean(KEY_DEBUG, enabled).apply()
+    }
+
+    /** 提醒到点时直接弹卡片（关掉 = 只有普通通知） */
+    fun remindCard(context: Context): Boolean = sp(context).getBoolean(KEY_REMIND, true)
+
+    fun setRemindCard(context: Context, enabled: Boolean) {
+        sp(context).edit().putBoolean(KEY_REMIND, enabled).apply()
     }
 
     fun clearLogin(context: Context) {

@@ -31,9 +31,9 @@ class NotificationService(val context: Context) {
     private val markwon = MarkwonFactory.createForNotification(context)
     private val appBaseUrl = context.getString(R.string.app_base_url)
 
-    fun display(subscription: Subscription, notification: Notification) {
+    fun display(subscription: Subscription, notification: Notification, silent: Boolean = false) {
         Log.d(TAG, "Displaying notification $notification")
-        displayInternal(subscription, notification)
+        displayInternal(subscription, notification, silent = silent)
     }
 
     fun update(subscription: Subscription, notification: Notification) {
@@ -83,7 +83,7 @@ class NotificationService(val context: Context) {
         return subscription.displayName ?: subscriptionTopicShortUrl(subscription)
     }
 
-    private fun displayInternal(subscription: Subscription, notification: Notification, update: Boolean = false) {
+    private fun displayInternal(subscription: Subscription, notification: Notification, update: Boolean = false, silent: Boolean = false) {
         val title = formatTitle(appBaseUrl, subscription, notification)
         val groupId = if (subscription.dedicatedChannels) subscriptionGroupId(subscription) else DEFAULT_GROUP
         val channelId = toChannelId(groupId, notification.priority)
@@ -97,6 +97,9 @@ class NotificationService(val context: Context) {
             .setShowWhen(true)
             .setOnlyAlertOnce(true) // Do not vibrate or play sound if already showing (updates!)
             .setAutoCancel(true) // Cancel when notification is clicked
+        if (silent) {
+            builder.setSilent(true) // 小狗之心：提醒卡片已经弹出来并念了，这条通知只进通知栏、不再响
+        }
         setStyleAndText(builder, subscription, notification) // Preview picture or big text style
         setClickAction(builder, subscription, notification)
         maybeSetDeleteIntent(builder, insistent)

@@ -7,6 +7,8 @@ import android.graphics.Typeface
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import android.text.InputType
 import android.util.Log
@@ -41,6 +43,7 @@ class SetupActivity : AppCompatActivity() {
     private lateinit var micStatus: TextView
     private lateinit var overlayStatus: TextView
     private lateinit var notifyStatus: TextView
+    private lateinit var bluetoothStatus: TextView
     private lateinit var pageInput: EditText
 
     // 问系统要权限（麦克风 / 通知），她点完以后把状态刷新一下
@@ -121,9 +124,14 @@ class SetupActivity : AppCompatActivity() {
                 permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
             }
         }
+        bluetoothStatus = permissionRow("蓝牙耳机（可选）", "去允许") {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                permissionLauncher.launch(Manifest.permission.BLUETOOTH_CONNECT)
+            }
+        }
         permissionRow("小米手机再多做一步", "应用详情") {
             open(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
-        }.text = "权限管理里打开「后台弹出界面」「显示悬浮窗」；省电策略选「无限制」；允许自启动"
+        }.text = "权限管理里打开「后台弹出界面」「显示悬浮窗」「锁屏显示」；省电策略选「无限制」；允许自启动"
 
         // ③ 入口
         column.addView(text("③ 入口", 16f, bold = true, top = 22))
@@ -137,8 +145,24 @@ class SetupActivity : AppCompatActivity() {
         column.addView(entrySwitch, rowParams(4))
         column.addView(text("控制中心的按钮：下拉控制中心 → 编辑 → 把带小猪图标的那颗拖进去。", 13f, dim = true, top = 2))
 
+        // ④ 提醒卡片
+        column.addView(text("④ 提醒卡片", 16f, bold = true, top = 22))
+        val remindSwitch = MaterialSwitch(this)
+        remindSwitch.text = "提醒到点直接弹卡片，并用他的声音念"
+        remindSwitch.isChecked = QuickPrefs.remindCard(this)
+        remindSwitch.setOnCheckedChangeListener { _, checked -> QuickPrefs.setRemindCard(this, checked) }
+        column.addView(remindSwitch, rowParams(4))
+        column.addView(text("手机亮着时是屏幕下方的小卡片；锁屏时像闹钟那样亮屏显示。关掉就只有普通通知。", 13f, dim = true, top = 2))
+        val remindRow = LinearLayout(this)
+        remindRow.orientation = LinearLayout.HORIZONTAL
+        remindRow.addView(button("试提醒卡片", top = 0) { tryRemind(false) })
+        val lockTry = button("试锁屏卡片", top = 0) { tryRemind(true) }
+        (lockTry.layoutParams as LinearLayout.LayoutParams).marginStart = dp(10)
+        remindRow.addView(lockTry)
+        column.addView(remindRow, rowParams(4))
+
         // 试一下
-        column.addView(text("试一下", 16f, bold = true, top = 22))
+        column.addView(text("试一下快捷唤醒", 16f, bold = true, top = 22))
         val tryRow = LinearLayout(this)
         tryRow.orientation = LinearLayout.HORIZONTAL
         tryRow.addView(button("喊一声", top = 0) { tryWake(false) })
@@ -229,6 +253,9 @@ class SetupActivity : AppCompatActivity() {
         val notify = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
             ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
         notifyStatus.text = if (notify) "已允许 ✓" else "还没允许（入口通知要用）"
+        val bluetooth = Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
+            ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
+        bluetoothStatus.text = if (bluetooth) "已允许 ✓" else "不戴蓝牙耳机可以不管"
     }
 
     private fun showLogin(result: QuickSite.Result) {
@@ -287,6 +314,20 @@ class SetupActivity : AppCompatActivity() {
             return
         }
         open(Intent(this, QuickWakeActivity::class.java).putExtra(QuickWakeActivity.EXTRA_PROBE, probe))
+    }
+
+    private fun tryRemind(lock: Boolean) {
+        if (QuickPrefs.origin(this).isEmpty() || !Settings.canDrawOverlays(this)) {
+            toast("先把上面的登录和悬浮窗权限弄好")
+            return
+        }
+        if (lock) {
+            toast("现在把手机锁屏，8 秒后弹出来")
+            val app = applicationContext
+            Handler(Looper.getMainLooper()).postDelayed({ RemindCenter.test(app, true) }, 8000)
+        } else {
+            RemindCenter.test(applicationContext, false)
+        }
     }
 
     /** 让悬浮窗服务停掉：下次喊的时候按新的设置重新载入网页 */

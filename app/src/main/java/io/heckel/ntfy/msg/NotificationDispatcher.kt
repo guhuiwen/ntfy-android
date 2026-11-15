@@ -35,7 +35,9 @@ class NotificationDispatcher(val context: Context, val repository: Repository) {
         if (cancel) {
             notifier.cancel(notification.notificationId)
         } else if (notify) {
-            notifier.display(subscription, notification)
+            // 小狗之心：提醒到点 → 弹卡片。亮着屏弹悬浮卡片时他会用声音念，这条通知就静音；其余照常
+            val card = io.heckel.ntfy.xiaogou.RemindCenter.handle(context, subscription, notification)
+            notifier.display(subscription, notification, silent = card == io.heckel.ntfy.xiaogou.RemindCenter.OVERLAY)
         }
         if (broadcast) {
             broadcaster.sendMessage(subscription, notification, muted)

@@ -281,6 +281,7 @@ class QuickOverlayService : Service() {
         try {
             windowManager?.addView(box, params)
             attached = true
+            showing = true
             webView?.onResume()
             return true
         } catch (e: Exception) {
@@ -295,9 +296,11 @@ class QuickOverlayService : Service() {
         val box = container
         if (!attached || box == null) {
             attached = false
+            showing = false
             return
         }
         attached = false
+        showing = false
         try {
             webView?.onPause()
         } catch (_: Exception) {
@@ -400,16 +403,15 @@ class QuickOverlayService : Service() {
             return
         }
         val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        try {
-            @Suppress("DEPRECATION")
-            val handlers = packageManager.queryIntentActivities(intent, PackageManager.MATCH_ALL)
-            val webApk = handlers.firstOrNull { it.activityInfo?.packageName?.startsWith("org.chromium.webapk") == true }
-            if (webApk != null) {
-                intent.setPackage(webApk.activityInfo.packageName)
+        val webApk = findWebApk()
+        Log.d(TAG, "opening external page (webapk=${webApk != null})")
+        if (webApk != null) {
+            try {
+                startActivity(Intent(intent).setPackage(webApk))
+                return
+            } catch (e: Exception) {
+                Log.w(TAG, "the web app would not open it, using the browser: ${e.javaClass.simpleName}")
             }
-            Log.d(TAG, "opening external page (webapk=${webApk != null}, handlers=${handlers.size})")
-        } catch (e: Exception) {
-            Log.w(TAG, "query handlers failed: ${e.message}")
         }
         try {
             startActivity(intent)
@@ -417,6 +419,28 @@ class QuickOverlayService : Service() {
             Log.w(TAG, "open external failed: ${e.javaClass.simpleName} ${e.message}")
             toast(R.string.xiaogou_quick_toast_open_failed)
         }
+    }
+
+    /** 找手机上装的自家网页版（WebAPK）：包名以 org.chromium.webapk 开头、清单里记的地址在自家网站上的那个 */
+    private fun findWebApk(): String? {
+        try {
+            val launcher = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+            @Suppress("DEPRECATION")
+            val apps = packageManager.queryIntentActivities(launcher, 0)
+            for (info in apps) {
+                val name = info.activityInfo?.packageName ?: continue
+                if (!name.startsWith("org.chromium.webapk")) continue
+                val meta = packageManager.getApplicationInfo(name, PackageManager.GET_META_DATA).metaData ?: continue
+                for (key in meta.keySet()) {
+                    @Suppress("DEPRECATION")
+                    val value = meta.get(key)?.toString() ?: continue
+                    if (value == pageOrigin || value.startsWith("$pageOrigin/")) return name
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "looking for the web app failed: ${e.message}")
+        }
+        return null
     }
 
     private fun toast(resId: Int) {
@@ -528,6 +552,10 @@ class QuickOverlayService : Service() {
         const val ACTION_WAKE = "io.heckel.ntfy.xiaogou.WAKE"
         const val ACTION_PROBE = "io.heckel.ntfy.xiaogou.PROBE"
         const val ACTION_HIDE = "io.heckel.ntfy.xiaogou.HIDE"
+
+        /** 浮层现在挂在屏幕上吗（提醒卡片看它：他正在说话就先等等） */
+        @Volatile
+        var showing = false
         private const val DEFAULT_HEIGHT_DP = 300
         private const val LOAD_TIMEOUT_MS = 20_000L
         private const val IDLE_RELEASE_MS = 10 * 60 * 1000L
