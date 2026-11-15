@@ -221,6 +221,7 @@ class RemindOverlayService : Service(), RemindPage.Listener {
         Log.d(TAG, "reminder card done: $action")
         if (action == "ok" || action == "snooze") {
             RemindCenter.cancelNotification(this, notificationId)
+            RemindCenter.handled()
         }
         current = null
         detach()

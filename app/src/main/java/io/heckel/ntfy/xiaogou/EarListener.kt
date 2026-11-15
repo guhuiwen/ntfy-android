@@ -27,7 +27,7 @@ class EarListener(private val context: Context, private val callback: Callback) 
         /** 听到唤醒词了（立刻） */
         fun onEarWake(keyword: String)
 
-        /** 听到之后约 0.4 秒：她是不是接着在说话（是 = 不放应答，直接听） */
+        /** 听到之后约 0.7 秒：她是不是接着在说话（是 = 不放应答，直接听） */
         fun onEarWakeSpeech(continued: Boolean)
     }
 
@@ -70,10 +70,14 @@ class EarListener(private val context: Context, private val callback: Callback) 
         mode = MODE_CLOSED
     }
 
-    /** 应答放完了：从现在起录到的才算她说的话（应答自己的声音不能算进去） */
-    fun markPrerollFromNow() {
+    /**
+     * 定下来「喊醒之后她说的话」从哪儿算起：
+     * fromNow = true：应答放完了，从现在起录到的才算（应答自己的声音不能算进去）；
+     * fromNow = false：没放应答，就从喊醒那一刻算起（本来就是，这里只是说一声「定了」）。
+     */
+    fun markPrerollFromNow(fromNow: Boolean) {
         synchronized(lock) {
-            if (mode == MODE_AFTER_WAKE) prerollFrom = written
+            if (mode == MODE_AFTER_WAKE && fromNow) prerollFrom = written
         }
     }
 
@@ -132,6 +136,7 @@ class EarListener(private val context: Context, private val callback: Callback) 
         var record: AudioRecord? = null
         var afterWake = 0
         var loud = 0
+        var peak = 0.0
         var lastMode = MODE_LISTEN
         try {
             while (running) {
@@ -159,6 +164,7 @@ class EarListener(private val context: Context, private val callback: Callback) 
                 if (now == MODE_AFTER_WAKE && lastMode != MODE_AFTER_WAKE) {
                     afterWake = 0
                     loud = 0
+                    peak = 0.0
                 }
                 lastMode = now
                 val n = record.read(frame, 0, frame.size)
@@ -188,9 +194,18 @@ class EarListener(private val context: Context, private val callback: Callback) 
                     }
                 } else {
                     afterWake++
-                    if (rms(frame, n) > SPEECH_RMS) loud++
+                    // 头 0.2 秒不看（那是名字的尾音）；之后的 0.5 秒里有两段以上够响，就当她接着在说
+                    if (afterWake > SKIP_FRAMES && afterWake <= DECIDE_FRAMES) {
+                        val level = rms(frame, n)
+                        if (level > SPEECH_RMS) loud++
+                        if (level > peak) peak = level
+                    }
                     if (afterWake == DECIDE_FRAMES) {
-                        callback.onEarWakeSpeech(loud >= DECIDE_FRAMES - 1)
+                        val continued = loud >= 2
+                        val peakText = String.format(java.util.Locale.US, "%.3f", peak)
+                        Log.d(TAG, "ear: after the wake word $loud loud frame(s) of ${DECIDE_FRAMES - SKIP_FRAMES}, peak $peakText -> " +
+                            (if (continued) "she kept talking" else "quiet"))
+                        callback.onEarWakeSpeech(continued)
                     }
                     if (afterWake > MAX_AFTER_WAKE_FRAMES) {
                         // 等了这么久对话那头都没来接手：算了，回去接着听
@@ -267,7 +282,8 @@ class EarListener(private val context: Context, private val callback: Callback) 
         private const val FRAME = 1600                               // 100 毫秒
         private const val RING_SECONDS = 10
         private const val MAX_PREROLL = EarEngine.SAMPLE_RATE * 8L   // 最多补 8 秒
-        private const val DECIDE_FRAMES = 4                          // 听到之后看 0.4 秒
+        private const val SKIP_FRAMES = 2                            // 听到之后头 0.2 秒不看（名字的尾音）
+        private const val DECIDE_FRAMES = 7                          // 一共看到 0.7 秒
         private const val MAX_AFTER_WAKE_FRAMES = 200                // 20 秒没人接手就回去听
         private const val SPEECH_RMS = 0.02                          // 比这个响算她在出声
     }

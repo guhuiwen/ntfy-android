@@ -11,7 +11,7 @@ import io.heckel.ntfy.R
  * 这个仓库是公开的，代码里不写任何地址、钥匙和唤醒词。
  */
 object QuickPrefs {
-    const val BUILD = "qw-3"
+    const val BUILD = "qw-4"
     const val DEFAULT_PAGE = "/quick/overlay.html"
 
     private const val FILE = "xiaogou_quick"

@@ -275,12 +275,14 @@ class QuickOverlayService : Service() {
             main.post { if (ok) onEarStarted() else onEarFailed() }
         }
 
+        // 注意：这里面调用的函数名不能和回调自己的方法同名——同名的话调到的是回调自己（qw-3 就这样：
+        // onEarWakeSpeech 在自己叫自己，应答一直没放出来，主线程还一直空转）
         override fun onEarWake(keyword: String) {
-            main.post { onEarWake() }
+            main.post { earWoke() }
         }
 
         override fun onEarWakeSpeech(continued: Boolean) {
-            main.post { onEarWakeSpeech(continued) }
+            main.post { earWokeSpeech(continued) }
         }
     }
 
@@ -379,7 +381,7 @@ class QuickOverlayService : Service() {
         }
     }
 
-    private fun onEarWake() {
+    private fun earWoke() {
         if (attached || !earRunning) {
             // 已经有一次对话挂着了（不该发生：对话期间耳朵是闭着的）
             if (attached) listener?.close()
@@ -393,10 +395,11 @@ class QuickOverlayService : Service() {
         show("wake")        // 网页这就去连服务器；她接着说的话耳朵先录着，等网页的麦克风开了再整段补上去
     }
 
-    private fun onEarWakeSpeech(continued: Boolean) {
+    private fun earWokeSpeech(continued: Boolean) {
         if (!earSession || !attached) return
         if (continued) {
             Log.d(TAG, "ear: she kept talking, no ack")
+            listener?.markPrerollFromNow(false)     // 不放应答：从喊醒那一刻起录到的都算她说的话
             return
         }
         val file = QuickLines.pick(this)
@@ -409,6 +412,7 @@ class QuickOverlayService : Service() {
             try {
                 val data = Base64.encodeToString(file.readBytes(), Base64.NO_WRAP)
                 callPage("window.ddQuick && ddQuick.ack && ddQuick.ack('$data')")
+                Log.d(TAG, "ear: ack handed to the page")
                 return
             } catch (e: Exception) {
                 Log.w(TAG, "ear: handing the ack to the page failed: ${e.message}")
@@ -420,6 +424,7 @@ class QuickOverlayService : Service() {
     /** 网页还没载好的时候，应答由这里直接放（放完才开始算她说的话） */
     private fun playAckHere(file: java.io.File) {
         stopAck()
+        Log.d(TAG, "ear: ack played here (page not ready)")
         try {
             val player = MediaPlayer()
             player.setAudioAttributes(
@@ -428,11 +433,11 @@ class QuickOverlayService : Service() {
             player.setDataSource(file.absolutePath)
             player.setOnCompletionListener {
                 stopAck()
-                listener?.markPrerollFromNow()
+                listener?.markPrerollFromNow(true)
             }
             player.setOnErrorListener { _, _, _ ->
                 stopAck()
-                listener?.markPrerollFromNow()
+                listener?.markPrerollFromNow(true)
                 true
             }
             player.prepare()
@@ -807,7 +812,7 @@ class QuickOverlayService : Service() {
         /** 网页把应答放完了：从现在起录到的才算她说的话 */
         @JavascriptInterface
         fun ackDone() {
-            listener?.markPrerollFromNow()
+            listener?.markPrerollFromNow(true)
         }
     }
 

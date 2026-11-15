@@ -45,6 +45,7 @@ class SetupActivity : AppCompatActivity() {
     private lateinit var notifyStatus: TextView
     private lateinit var bluetoothStatus: TextView
     private lateinit var earStatus: TextView
+    private lateinit var miuiStatus: TextView
     private val ticker = Handler(Looper.getMainLooper())
     private val tick = object : Runnable {
         override fun run() {
@@ -144,9 +145,7 @@ class SetupActivity : AppCompatActivity() {
                 permissionLauncher.launch(Manifest.permission.BLUETOOTH_CONNECT)
             }
         }
-        permissionRow("小米手机再多做一步", "应用详情") {
-            open(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
-        }.text = "权限管理里打开「后台弹出界面」「显示悬浮窗」「锁屏显示」；省电策略选「无限制」；允许自启动"
+        miuiStatus = permissionRow("小米手机再多做一步", "去打开") { openMiuiPermissions() }
 
         // ③ 入口
         column.addView(text("③ 入口", 16f, bold = true, top = 22))
@@ -295,6 +294,12 @@ class SetupActivity : AppCompatActivity() {
         val bluetooth = Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
             ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
         bluetoothStatus.text = if (bluetooth) "已允许 ✓" else "不戴蓝牙耳机可以不管"
+        val lockShow = when (RemindCenter.miuiLockScreenAllowed(this)) {
+            true -> "\n锁屏显示：已打开 ✓"
+            false -> "\n锁屏显示：还没打开 → 锁屏时提醒只有声音，不会亮屏弹卡片"
+            else -> ""
+        }
+        miuiStatus.text = "把「后台弹出界面」「显示悬浮窗」「锁屏显示」三个都打开；省电策略选「无限制」；允许自启动$lockShow"
     }
 
     private fun showLogin(result: QuickSite.Result) {
@@ -422,6 +427,19 @@ class SetupActivity : AppCompatActivity() {
             stopService(Intent(this, QuickOverlayService::class.java))
         } catch (e: Exception) {
             Log.w(TAG, "stop overlay failed: ${e.message}")
+        }
+    }
+
+    /** 直接进小米的「权限管理」那一页；进不去（不是小米 / 系统改了）就退回应用详情 */
+    private fun openMiuiPermissions() {
+        try {
+            startActivity(
+                Intent("miui.intent.action.APP_PERM_EDITOR")
+                    .setClassName("com.miui.securitycenter", "com.miui.permcenter.permissions.PermissionsEditorActivity")
+                    .putExtra("extra_pkgname", packageName)
+            )
+        } catch (e: Exception) {
+            open(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
         }
     }
 

@@ -1,12 +1,14 @@
 package io.heckel.ntfy.xiaogou
 
 import android.app.Activity
+import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.util.Log
 import android.view.WindowManager
 import org.json.JSONObject
@@ -34,6 +36,16 @@ class RemindLockActivity : Activity(), RemindPage.Listener {
             window.addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON)
         }
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        try {
+            // 有的系统光靠上面两句不肯亮屏，再推一把
+            @Suppress("DEPRECATION")
+            val wake = (getSystemService(Context.POWER_SERVICE) as PowerManager).newWakeLock(
+                PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP, "XiaogouQuick:remind"
+            )
+            wake.acquire(6000)
+        } catch (e: Exception) {
+            Log.w(TAG, "screen wake failed: ${e.message}")
+        }
         val origin = QuickPrefs.origin(this)
         if (origin.isEmpty() || !take(intent)) {
             finish()
@@ -69,7 +81,18 @@ class RemindLockActivity : Activity(), RemindPage.Listener {
         return true
     }
 
+    override fun onResume() {
+        super.onResume()
+        RemindCenter.lockCardVisible = true
+    }
+
+    override fun onPause() {
+        RemindCenter.lockCardVisible = false
+        super.onPause()
+    }
+
     override fun onDestroy() {
+        RemindCenter.lockCardVisible = false
         main.removeCallbacksAndMessages(null)
         page?.destroy()
         page = null
@@ -93,6 +116,7 @@ class RemindLockActivity : Activity(), RemindPage.Listener {
         Log.d(TAG, "lock card done: $action")
         if (action == "ok" || action == "snooze") {
             RemindCenter.cancelNotification(this, notificationId)
+            RemindCenter.handled()
         }
         finish()
     }
