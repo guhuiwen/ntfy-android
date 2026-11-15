@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 小狗之心 · 快捷唤醒。称呼（通知 / 按钮上显示的名字）是运行时从服务器配置里拿的，这里只放中性的字 -->
+    <string name="xiaogou_quick_title" translatable="false">快捷唤醒</string>
+    <string name="xiaogou_quick_settings_summary" translatable="false">登录、权限、入口</string>
+    <string name="xiaogou_quick_channel_entry" translatable="false">快捷唤醒 · 入口</string>
+    <string name="xiaogou_quick_channel_session" translatable="false">快捷唤醒 · 进行中</string>
+    <string name="xiaogou_quick_entry_text" translatable="false">点一下，喊他</string>
+    <string name="xiaogou_quick_session_text" translatable="false">正在听……</string>
+    <string name="xiaogou_quick_session_hide" translatable="false">收起</string>
+    <string name="xiaogou_quick_toast_no_mic" translatable="false">麦克风用不了：到「快捷唤醒」设置里把权限给上</string>
+    <string name="xiaogou_quick_toast_no_overlay" translatable="false">悬浮窗没打开：到「快捷唤醒」设置里打开</string>
+    <string name="xiaogou_quick_toast_login" translatable="false">登录失效了：到「快捷唤醒」设置里重新登录</string>
+    <string name="xiaogou_quick_toast_load_failed" translatable="false">连不上服务器，等一下再试</string>
+    <string name="xiaogou_quick_toast_open_failed" translatable="false">打不开那个页面</string>
+</resources>

@@ -14,10 +14,22 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/> <!-- As of Android 13, we need to ask for permission to post notifications -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/> <!-- Allows to ignore battery optimization without going to the settings -->
 
+    <!-- 小狗之心 · 快捷唤醒：悬浮窗里的网页要用麦克风、要浮在别的界面上 -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE"/>
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
+
     <!-- UnifiedPush "raise to foreground" requirement, see https://unifiedpush.org/developers/spec/android/#service-to-raise-to-the-foreground -->
     <queries>
         <intent>
             <action android:name="org.unifiedpush.android.connector.RAISE_TO_FOREGROUND" />
+        </intent>
+        <!-- 小狗之心 · 快捷唤醒：切去打电话时要找手机上装的网页版（WebAPK）来开自家网址 -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="https" />
         </intent>
     </queries>
 
@@ -180,6 +192,40 @@
                 android:enabled="true"
                 android:exported="false">
         </receiver>
+
+        <!-- 小狗之心 · 快捷唤醒（代码都在 io.heckel.ntfy.xiaogou 里）-->
+        <activity
+                android:name=".xiaogou.SetupActivity"
+                android:label="@string/xiaogou_quick_title"
+                android:exported="true">
+        </activity>
+        <activity
+                android:name=".xiaogou.QuickWakeActivity"
+                android:theme="@android:style/Theme.Translucent.NoTitleBar"
+                android:excludeFromRecents="true"
+                android:noHistory="true"
+                android:launchMode="singleInstance"
+                android:taskAffinity="io.heckel.ntfy.xiaogou.wake"
+                android:exported="false">
+        </activity>
+        <service
+                android:name=".xiaogou.QuickOverlayService"
+                android:foregroundServiceType="microphone|specialUse"
+                android:exported="false">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Voice assistant card: while the small floating card is on screen, the service keeps the microphone session with the user's own server alive." />
+        </service>
+        <service
+                android:name=".xiaogou.QuickTileService"
+                android:label="@string/xiaogou_quick_title"
+                android:icon="@drawable/ic_xiaogou_quick"
+                android:permission="android.permission.BIND_QUICK_SETTINGS_TILE"
+                android:exported="true">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE"/>
+            </intent-filter>
+        </service>
 
         <!-- Firebase messaging (note that this is empty in the F-Droid flavor) -->
         <service

@@ -29,6 +29,7 @@ class Application : Application() {
             DynamicColors.applyToActivitiesIfAvailable(this)
         }
         registerNetworkCallback()
+        io.heckel.ntfy.xiaogou.QuickEntry.refresh(this) // 小狗之心：快捷唤醒的入口通知
     }
 
     private fun registerNetworkCallback() {
